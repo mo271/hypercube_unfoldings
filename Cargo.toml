@@ -10,6 +10,7 @@ num-integer = "0.1.46"
 num-rational = "0.4.2"
 num-traits = "0.2.19"
 rayon = "1.11.0"
+rug = "1.28.0"
 
 [[bin]]
 name = "hypercube_nets"

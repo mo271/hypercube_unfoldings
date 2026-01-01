@@ -1,11 +1,12 @@
-use num_bigint::{BigInt, BigUint};
-use num_integer::Integer;
-use num_traits::{One, Zero};
 use rayon::prelude::*;
+use rug::{
+    Assign, Integer,
+    ops::{Pow, SubFrom},
+};
 
-pub fn count_hypercube_nets(n: u32) -> BigUint {
-    let factorials: Vec<BigUint> = (0..=n).map(|i| factorial(i)).collect();
-    let bn_size = (BigUint::from(2u32).pow(n)) * &factorials[n as usize];
+pub fn count_hypercube_nets(n: u32) -> Integer {
+    let factorials: Vec<Integer> = (0..=n).map(|i| factorial(i)).collect();
+    let bn_size = Integer::from(2u32).pow(n) * &factorials[n as usize];
 
     // Precompute partitions for all k in 0..=n
     // This is fast enough to be serial or parallel, but generating is recursive.
@@ -42,7 +43,7 @@ pub fn count_hypercube_nets(n: u32) -> BigUint {
     // Strategy: For each n_p, parallelize over p_list.
     // This gives plenty of tasks (sum p(k) over k).
 
-    let total_sum: BigUint = (0..=n)
+    let total_sum: Integer = (0..=n)
         .into_par_iter()
         .map(|n_p| {
             let n_m = n - n_p;
@@ -55,32 +56,32 @@ pub fn count_hypercube_nets(n: u32) -> BigUint {
             p_list
                 .par_iter()
                 .map(|p_data| {
-                    let mut local_sum = BigUint::zero();
+                    let mut local_sum = Integer::ZERO;
                     for m_data in m_list {
                         local_sum += calculate_term(p_data, m_data, n, &bn_size);
                     }
                     local_sum
                 })
-                .reduce(|| BigUint::zero(), |a, b| a + b)
+                .reduce(|| Integer::ZERO, |a, b| a + b)
         })
-        .reduce(|| BigUint::zero(), |a, b| a + b);
+        .reduce(|| Integer::ZERO, |a, b| a + b);
 
     total_sum / bn_size
 }
 
 struct PreP {
     p: Vec<u32>,
-    cent: BigUint,
+    cent: Integer,
     n_contrib: Vec<u32>,
-    w_contrib: Vec<BigUint>,
-    t0_partial_a0_1: BigUint,
+    w_contrib: Vec<Integer>,
+    t0_partial_a0_1: Integer,
 }
 
 struct PreM {
     m1: u32,
-    cent: BigUint,
+    cent: Integer,
     n_contrib: Vec<u32>,
-    w_contrib: Vec<BigUint>,
+    w_contrib: Vec<Integer>,
 }
 
 fn generate_all_partitions(n: u32) -> Vec<Vec<Vec<u32>>> {
@@ -115,18 +116,18 @@ fn generate_partitions_recursive(
     }
 }
 
-fn precompute_p(p: &[u32], factorials: &[BigUint], n: u32) -> PreP {
-    let mut cent = BigUint::one();
+fn precompute_p(p: &[u32], factorials: &[Integer], n: u32) -> PreP {
+    let mut cent = Integer::ONE.clone();
     for k in 1..p.len() {
         if p[k] > 0 {
-            let base = BigUint::from(2 * k as u32);
+            let base = Integer::from(2 * k as u32);
             cent *= base.pow(p[k]);
             cent *= &factorials[p[k] as usize];
         }
     }
 
     let mut n_contrib = vec![0u32; (2 * n + 1) as usize];
-    let mut w_contrib = vec![BigUint::zero(); (2 * n + 1) as usize];
+    let mut w_contrib = vec![Integer::ZERO; (2 * n + 1) as usize];
 
     for k in 1..p.len() {
         if p[k] > 0 {
@@ -137,11 +138,11 @@ fn precompute_p(p: &[u32], factorials: &[BigUint], n: u32) -> PreP {
     }
 
     for a in 1..w_contrib.len() {
-        let mut w = BigUint::zero();
+        let mut w = Integer::ZERO.clone();
         for b in 1..a {
             if a % b == 0 {
                 if b < p.len() && p[b] > 0 {
-                    w += BigUint::from(b as u32) * BigUint::from(2 * p[b]);
+                    w += Integer::from(b as u32) * Integer::from(2 * p[b]);
                 }
             }
         }
@@ -150,9 +151,9 @@ fn precompute_p(p: &[u32], factorials: &[BigUint], n: u32) -> PreP {
 
     let t0_partial_a0_1 = if p.len() > 1 && p[1] >= 2 {
         let c1 = p[1];
-        BigUint::from(2 * c1 - 2).pow(c1) * BigUint::from(2 * c1).pow(c1 - 2)
+        Integer::from(2 * c1 - 2).pow(c1) * Integer::from(2 * c1).pow(c1 - 2)
     } else {
-        BigUint::zero()
+        Integer::ZERO
     };
 
     PreP {
@@ -164,18 +165,18 @@ fn precompute_p(p: &[u32], factorials: &[BigUint], n: u32) -> PreP {
     }
 }
 
-fn precompute_m(m: &[u32], factorials: &[BigUint], n: u32) -> PreM {
-    let mut cent = BigUint::one();
+fn precompute_m(m: &[u32], factorials: &[Integer], n: u32) -> PreM {
+    let mut cent = Integer::ONE.clone();
     for k in 1..m.len() {
         if m[k] > 0 {
-            let base = BigUint::from(2 * k as u32);
+            let base = Integer::from(2 * k as u32);
             cent *= base.pow(m[k]);
             cent *= &factorials[m[k] as usize];
         }
     }
 
     let mut n_contrib = vec![0u32; (2 * n + 1) as usize];
-    let mut w_contrib = vec![BigUint::zero(); (2 * n + 1) as usize];
+    let mut w_contrib = vec![Integer::ZERO; (2 * n + 1) as usize];
 
     for k in 1..m.len() {
         if m[k] > 0 {
@@ -187,13 +188,13 @@ fn precompute_m(m: &[u32], factorials: &[BigUint], n: u32) -> PreM {
     }
 
     for a in 1..w_contrib.len() {
-        let mut w = BigUint::zero();
+        let mut w = Integer::ZERO;
         for b in 1..a {
             if a % b == 0 {
                 if b % 2 == 0 {
                     let k = b / 2;
                     if k < m.len() && m[k] > 0 {
-                        w += BigUint::from(b as u32) * BigUint::from(m[k]);
+                        w += Integer::from(b as u32) * Integer::from(m[k]);
                     }
                 }
             }
@@ -211,14 +212,14 @@ fn precompute_m(m: &[u32], factorials: &[BigUint], n: u32) -> PreM {
     }
 }
 
-fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &BigUint) -> BigUint {
+fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &Integer) -> Integer {
     let a_0: u32;
     if p_data.p.len() > 1 && p_data.p[1] > 0 {
         a_0 = 1;
     } else if (p_data.p.len() > 2 && p_data.p[2] > 0) || m_data.m1 > 0 {
         a_0 = 2;
     } else {
-        return Zero::zero();
+        return Integer::ZERO;
     }
 
     let t_0 = if a_0 == 1 {
@@ -228,15 +229,12 @@ fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &BigUint) -> Bi
         let m1 = m_data.m1;
         let v = (2 * p2 + m1) as usize;
 
-        if v == 0 {
-            return Zero::zero();
-        }
-        if p2 == 0 {
-            return Zero::zero();
+        if v == 0 || p2 == 0 {
+            return Integer::ZERO;
         }
 
         let size = v - 1;
-        let mut mat = vec![vec![BigInt::zero(); size]; size];
+        let mut mat = vec![vec![Integer::ZERO; size]; size];
         let num_paired_rows = 2 * p2 as usize;
 
         for r in 0..size {
@@ -245,9 +243,9 @@ fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &BigUint) -> Bi
                 let orig_c = c + 1;
                 if r == c {
                     if orig_r < num_paired_rows {
-                        mat[r][c] = BigInt::from(2 * v as i64 - 3);
+                        mat[r][c] = Integer::from(2 * v as i64 - 3);
                     } else {
-                        mat[r][c] = BigInt::from(2 * v as i64 - 2);
+                        mat[r][c] = Integer::from(2 * v as i64 - 2);
                     }
                 } else {
                     let is_pair = if orig_r < num_paired_rows && orig_c < num_paired_rows {
@@ -256,25 +254,25 @@ fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &BigUint) -> Bi
                         false
                     };
                     if is_pair {
-                        mat[r][c] = BigInt::from(-1);
+                        mat[r][c] = Integer::from(-1);
                     } else {
-                        mat[r][c] = BigInt::from(-2);
+                        mat[r][c] = Integer::from(-2);
                     }
                 }
             }
         }
         let det = determinant_bigint(&mut mat);
-        if det <= Zero::zero() {
-            return Zero::zero();
+        if det <= 0 {
+            return Integer::ZERO;
         }
-        BigUint::from(2 * p2) * det.to_biguint().unwrap()
+        Integer::from(2 * p2) * det
     };
 
     if t_0.is_zero() {
-        return Zero::zero();
+        return Integer::ZERO;
     }
 
-    let mut prod: BigUint = One::one();
+    let mut prod = Integer::ONE.clone();
 
     for a in (a_0 + 1)..=(2 * n) {
         let a_idx = a as usize;
@@ -292,7 +290,7 @@ fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &BigUint) -> Bi
             continue;
         }
 
-        let w_a = &p_data.w_contrib[a_idx] + &m_data.w_contrib[a_idx];
+        let w_a = p_data.w_contrib[a_idx].clone() + &m_data.w_contrib[a_idx];
 
         let p_a = if a_idx < p_data.p.len() {
             p_data.p[a_idx]
@@ -300,14 +298,14 @@ fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &BigUint) -> Bi
             0
         };
 
-        let term_add = BigUint::from(a) * BigUint::from(n_a);
-        let base1 = &w_a + &term_add;
+        let term_add = Integer::from(a) * Integer::from(n_a);
+        let base1 = w_a.clone() + &term_add;
         let exp1 = n_a - 1 - p_a;
 
-        let base2 = if base1 >= BigUint::from(2u32) {
-            &base1 - 2u32
+        let base2 = if base1 >= Integer::from(2u32) {
+            base1.clone() - 2u32
         } else {
-            Zero::zero()
+            Integer::ZERO
         };
         let exp2 = p_a;
 
@@ -316,18 +314,22 @@ fn calculate_term(p_data: &PreP, m_data: &PreM, n: u32, bn_size: &BigUint) -> Bi
     }
 
     let tr_g = t_0 * prod;
-    let cent_size = &p_data.cent * &m_data.cent;
+    let cent_size = p_data.cent.clone() * &m_data.cent;
     (tr_g * bn_size) / cent_size
 }
 
-fn determinant_bigint(matrix: &mut Vec<Vec<BigInt>>) -> BigInt {
+fn determinant_bigint(matrix: &mut Vec<Vec<Integer>>) -> Integer {
     let n = matrix.len();
     if n == 0 {
-        return One::one();
+        return Integer::ONE.clone();
     }
     if n == 1 {
         return matrix[0][0].clone();
     }
+
+    // Re-use storage to avoid allocations in hot loop.
+    let mut val_tmp = Integer::new();
+    let mut val = Integer::new();
 
     for k in 0..n - 1 {
         if matrix[k][k].is_zero() {
@@ -341,33 +343,36 @@ fn determinant_bigint(matrix: &mut Vec<Vec<BigInt>>) -> BigInt {
             if let Some(r) = swap_row {
                 matrix.swap(k, r);
                 for i in 0..n {
-                    matrix[k][i] = -matrix[k][i].clone();
+                    matrix[k][i].sub_from(Integer::ZERO);
                 }
             } else {
-                return Zero::zero();
+                return Integer::ZERO;
             }
         }
         for i in k + 1..n {
             for j in k + 1..n {
-                let val = &matrix[i][j] * &matrix[k][k] - &matrix[i][k] * &matrix[k][j];
+                val_tmp.assign(&matrix[i][j] * &matrix[k][k]);
+                val.assign(&matrix[i][k] * &matrix[k][j]);
+                // val = val_tmp - val
+                val.sub_from(&val_tmp);
+                let (before, after) = matrix.split_at_mut(k);
                 let denom = if k == 0 {
-                    BigInt::one()
+                    Integer::ONE
                 } else {
-                    matrix[k - 1][k - 1].clone()
+                    &before[k - 1][k - 1]
                 };
                 if denom.is_zero() {
-                    return Zero::zero();
+                    return Integer::ZERO;
                 }
-                let (q, _) = val.div_rem(&denom);
-                matrix[i][j] = q;
+                after[i - k][j].assign(val.div_exact_ref(denom));
             }
         }
     }
     matrix[n - 1][n - 1].clone()
 }
 
-fn factorial(n: u32) -> BigUint {
-    let mut f: BigUint = One::one();
+fn factorial(n: u32) -> Integer {
+    let mut f = Integer::ONE.clone();
     for i in 1..=n {
         f *= i;
     }
@@ -412,7 +417,7 @@ mod tests {
         for (n, val) in expected {
             assert_eq!(
                 count_hypercube_nets(n),
-                BigUint::from_str(val).unwrap(),
+                Integer::from_str(val).unwrap(),
                 "n={}",
                 n
             );
