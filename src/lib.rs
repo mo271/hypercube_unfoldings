@@ -410,7 +410,12 @@ mod tests {
         ];
 
         for (n, val) in expected {
-            assert_eq!(count_hypercube_nets(n), BigUint::from_str(val).unwrap(), "n={}", n);
+            assert_eq!(
+                count_hypercube_nets(n),
+                BigUint::from_str(val).unwrap(),
+                "n={}",
+                n
+            );
         }
     }
 }

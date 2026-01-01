@@ -4,7 +4,10 @@ use std::time::Instant;
 fn main() {
     let max_n = 48; // Adjust this number as needed
 
-    println!("{:<10} | {:<15} | {:<30}", "Dimension", "Time", "Number of Nets");
+    println!(
+        "{:<10} | {:<15} | {:<30}",
+        "Dimension", "Time", "Number of Nets"
+    );
     println!("{:-<10}-|-{:-<15}-|-{:-<30}", "", "", "");
 
     for n in 1..=max_n {
