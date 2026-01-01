@@ -1,6 +1,11 @@
 use hypercube_nets::count_hypercube_nets;
 use std::time::Instant;
 
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 fn main() {
     let max_n = 48; // Adjust this number as needed
 
