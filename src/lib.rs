@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use rayon::{iter::repeat, prelude::*};
 use rug::{
     Assign, Integer,
-    ops::{AddFrom, Pow, SubFrom},
+    ops::{AddFrom, MulFrom, Pow, SubFrom},
 };
 use thread_local::ThreadLocal;
 
@@ -13,6 +13,16 @@ struct PrecomputedData {
     t0_partial_a0_1s: Vec<Integer>,
     num_partitions_with_max: Vec<Vec<u64>>,
     num_partitions: Vec<u64>,
+}
+
+#[derive(Default)]
+struct ThreadCache {
+    matrices: Vec<Vec<Vec<Integer>>>,
+    w: Vec<u64>,
+    t_0: Integer,
+    cent: Integer,
+    val: Integer,
+    val_tmp: Integer,
 }
 
 impl PrecomputedData {
@@ -36,7 +46,7 @@ impl PrecomputedData {
             .collect();
 
         let mut num_partitions_with_max = vec![vec![0u64; n + 1]; n + 1];
-        num_partitions_with_max[0].fill_with(|| 1);
+        num_partitions_with_max[0].fill(1);
         for i in 1..=n {
             for k in 1..=i {
                 num_partitions_with_max[i][k] =
@@ -62,10 +72,10 @@ impl PrecomputedData {
         &self.t0_partial_a0_1s[p.get(1).copied().unwrap_or_default() as usize]
     }
 
-    fn unrank_partition(&self, n: u32, rank: u64) -> Vec<u32> {
-        let n = n as usize;
+    fn unrank_partition(&self, n: usize, rank: u64, ans: &mut Vec<u32>) {
         debug_assert!(rank < self.num_partitions_with_max[n][n]);
-        let mut ans = vec![0; n + 1];
+        ans.resize(n + 1, 0);
+        ans.fill(0);
         let mut current_n = n;
         let mut max_val = n;
         let mut index = rank;
@@ -84,22 +94,25 @@ impl PrecomputedData {
                 }
             }
         }
-        ans
     }
 }
 
 pub fn count_hypercube_nets(n: u32) -> Integer {
-    let precomputed = PrecomputedData::new(n as usize);
+    let n = n as usize;
+    let precomputed = PrecomputedData::new(n);
 
     let mut sums = ThreadLocal::<RefCell<Integer>>::new();
+    let caches = ThreadLocal::<RefCell<ThreadCache>>::new();
+    let unrank_cache_p = ThreadLocal::<RefCell<Vec<u32>>>::new();
+    let unrank_cache_m = ThreadLocal::<RefCell<Vec<u32>>>::new();
 
-    let bn_size = Integer::from(2u32).pow(n) * &precomputed.factorials[n as usize];
+    let bn_size = Integer::from(2u32).pow(n as u32) * &precomputed.factorials[n];
     (0..=n)
         .into_par_iter()
         .flat_map(|n_p| {
             let n_m = n - n_p;
-            let num_p = precomputed.num_partitions[n_p as usize] as usize;
-            let num_m = precomputed.num_partitions[n_m as usize] as usize;
+            let num_p = precomputed.num_partitions[n_p] as usize;
+            let num_m = precomputed.num_partitions[n_m] as usize;
             let num = num_p.checked_mul(num_m).expect("too many terms");
             repeat(n_p).zip(0..num)
         })
@@ -108,11 +121,23 @@ pub fn count_hypercube_nets(n: u32) -> Integer {
             let num_m = precomputed.num_partitions[n_m as usize] as usize;
             let p_idx = i / num_m;
             let m_idx = i % num_m;
-            let p = precomputed.unrank_partition(n_p, p_idx as u64);
-            let m = precomputed.unrank_partition(n_m, m_idx as u64);
+            let p = unrank_cache_p.get_or_default();
+            let m = unrank_cache_m.get_or_default();
+            let mut p = p.borrow_mut();
+            let mut m = m.borrow_mut();
+            precomputed.unrank_partition(n_p, p_idx as u64, &mut *p);
+            precomputed.unrank_partition(n_m, m_idx as u64, &mut *m);
             let sum = sums.get_or_default();
-            sum.borrow_mut()
-                .add_from(calculate_term(&p, &m, n, &bn_size, &precomputed));
+            let cache = caches.get_or_default();
+            calculate_term(
+                &p,
+                &m,
+                n,
+                &bn_size,
+                &precomputed,
+                &mut *sum.borrow_mut(),
+                &mut *cache.borrow_mut(),
+            );
         });
     let mut tot_sum = Integer::ZERO;
     for i in sums.iter_mut() {
@@ -124,32 +149,48 @@ pub fn count_hypercube_nets(n: u32) -> Integer {
 fn calculate_term(
     p: &[u32],
     m: &[u32],
-    n: u32,
+    n: usize,
     bn_size: &Integer,
     precomputed_data: &PrecomputedData,
-) -> Integer {
+    accumulator: &mut Integer,
+    cache: &mut ThreadCache,
+) {
+    let ThreadCache {
+        matrices,
+        w,
+        t_0,
+        cent,
+        val,
+        val_tmp,
+    } = cache;
     let p2 = p.get(2).copied().unwrap_or_default();
     let m1 = m.get(1).copied().unwrap_or_default();
-    let a_0: u32;
+    let a_0: usize;
     if p.len() > 1 && p[1] > 0 {
         a_0 = 1;
     } else if p2 > 0 || m1 > 0 {
         a_0 = 2;
     } else {
-        return Integer::ZERO;
+        return;
     }
 
-    let t_0 = if a_0 == 1 {
-        precomputed_data.t0_partial_a0_1(p).clone()
+    if a_0 == 1 {
+        t_0.assign(precomputed_data.t0_partial_a0_1(p))
     } else {
         let v = (2 * p2 + m1) as usize;
 
         if v == 0 || p2 == 0 {
-            return Integer::ZERO;
+            return;
         }
 
         let size = v - 1;
-        let mut mat = vec![vec![Integer::ZERO; size]; size];
+        if matrices.len() <= size {
+            matrices.resize(size + 1, vec![]);
+        }
+        let mat = &mut matrices[size];
+        if mat.len() != size {
+            *mat = vec![vec![Integer::ZERO; size]; size];
+        }
         let num_paired_rows = 2 * p2 as usize;
 
         for (r, row) in mat.iter_mut().enumerate() {
@@ -158,9 +199,9 @@ fn calculate_term(
                 let orig_c = c + 1;
                 if r == c {
                     if orig_r < num_paired_rows {
-                        *val = Integer::from(2 * v as i64 - 3);
+                        val.assign(2 * v as i64 - 3);
                     } else {
-                        *val = Integer::from(2 * v as i64 - 2);
+                        val.assign(2 * v as i64 - 2);
                     }
                 } else {
                     let is_pair = if orig_r < num_paired_rows && orig_c < num_paired_rows {
@@ -169,26 +210,30 @@ fn calculate_term(
                         false
                     };
                     if is_pair {
-                        *val = Integer::from(-1);
+                        val.assign(-1);
                     } else {
-                        *val = Integer::from(-2);
+                        val.assign(-2);
                     }
                 }
             }
         }
-        let det = determinant_bigint(&mut mat);
-        if det <= 0 {
-            return Integer::ZERO;
+        let det = determinant_bigint(mat, val, val_tmp);
+        if !det.is_positive() {
+            return;
         }
-        Integer::from(2 * p2) * det
+        t_0.assign(2 * p2);
+        t_0.mul_from(det);
     };
 
     if t_0.is_zero() {
-        return Integer::ZERO;
+        return;
     }
 
     // w cannot overflow a u64 even with n = 1000
-    let mut w = vec![0u64; (2 * n + 1) as usize];
+    if w.len() != 2 * n + 1 {
+        w.resize(2 * n + 1, 0);
+    }
+    w.fill(0);
 
     for (b, &v) in p.iter().enumerate().skip(1) {
         if v > 0 {
@@ -205,8 +250,6 @@ fn calculate_term(
             }
         }
     }
-
-    let mut prod = Integer::ONE.clone();
 
     for a in (a_0 + 1)..=(2 * n) {
         let a_idx = a as usize;
@@ -231,38 +274,38 @@ fn calculate_term(
         let exp2 = p_a;
 
         let term = w_a * Integer::from(base1).pow(exp1) * Integer::from(base2).pow(exp2);
-        prod *= term;
+        *t_0 *= term;
     }
 
-    let tr_g = t_0 * prod;
-
-    let mut cent_size = Integer::ONE.clone();
+    cent.assign(1);
     for (k, &v) in p.iter().enumerate().skip(1) {
         if v > 0 {
-            cent_size *= &precomputed_data.pows_of_evens_times_factorials[k][v as usize];
+            *cent *= &precomputed_data.pows_of_evens_times_factorials[k][v as usize];
         }
     }
     for (k, &v) in m.iter().enumerate().skip(1) {
         if v > 0 {
-            cent_size *= &precomputed_data.pows_of_evens_times_factorials[k][v as usize];
+            *cent *= &precomputed_data.pows_of_evens_times_factorials[k][v as usize];
         }
     }
 
-    (tr_g * bn_size) / cent_size
+    *t_0 *= bn_size;
+    t_0.div_exact_mut(cent);
+    accumulator.add_from(&*t_0);
 }
 
-fn determinant_bigint(matrix: &mut [Vec<Integer>]) -> Integer {
+fn determinant_bigint<'a>(
+    matrix: &'a mut [Vec<Integer>],
+    val: &mut Integer,
+    val_tmp: &mut Integer,
+) -> &'a Integer {
     let n = matrix.len();
     if n == 0 {
-        return Integer::ONE.clone();
+        return Integer::ONE;
     }
     if n == 1 {
-        return matrix[0][0].clone();
+        return &matrix[0][0];
     }
-
-    // Re-use storage to avoid allocations in hot loop.
-    let mut val_tmp = Integer::new();
-    let mut val = Integer::new();
 
     for k in 0..n - 1 {
         if matrix[k][k].is_zero() {
@@ -279,29 +322,31 @@ fn determinant_bigint(matrix: &mut [Vec<Integer>]) -> Integer {
                     v.sub_from(&Integer::ZERO);
                 });
             } else {
-                return Integer::ZERO;
+                matrix[0][0].assign(0);
+                return &matrix[0][0];
             }
+        }
+        let (before, after) = matrix.split_at_mut(k);
+        let denom = if k == 0 {
+            Integer::ONE
+        } else {
+            &before[k - 1][k - 1]
+        };
+        if denom.is_zero() {
+            matrix[0][0].assign(0);
+            return &matrix[0][0];
         }
         for i in k + 1..n {
             for j in k + 1..n {
-                val_tmp.assign(&matrix[i][j] * &matrix[k][k]);
-                val.assign(&matrix[i][k] * &matrix[k][j]);
+                val_tmp.assign(&after[i - k][j] * &after[0][k]);
+                val.assign(&after[i - k][k] * &after[0][j]);
                 // val = val_tmp - val
-                val.sub_from(&val_tmp);
-                let (before, after) = matrix.split_at_mut(k);
-                let denom = if k == 0 {
-                    Integer::ONE
-                } else {
-                    &before[k - 1][k - 1]
-                };
-                if denom.is_zero() {
-                    return Integer::ZERO;
-                }
+                val.sub_from(&*val_tmp);
                 after[i - k][j].assign(val.div_exact_ref(denom));
             }
         }
     }
-    matrix[n - 1][n - 1].clone()
+    &matrix[n - 1][n - 1]
 }
 
 fn factorial(n: usize) -> Integer {
