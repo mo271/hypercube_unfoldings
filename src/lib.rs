@@ -11,6 +11,8 @@ struct PrecomputedData {
     factorials: Vec<Integer>,
     pows_of_evens_times_factorials: Vec<Vec<Integer>>,
     t0_partial_a0_1s: Vec<Integer>,
+    num_partitions_with_max: Vec<Vec<u64>>,
+    num_partitions: Vec<u64>,
 }
 
 impl PrecomputedData {
@@ -32,10 +34,28 @@ impl PrecomputedData {
                     .collect()
             })
             .collect();
+
+        let mut num_partitions_with_max = vec![vec![0u64; n + 1]; n + 1];
+        for i in 0..=n {
+            num_partitions_with_max[0][i] = 1;
+        }
+        for i in 1..=n {
+            for k in 1..=i {
+                num_partitions_with_max[i][k] =
+                    num_partitions_with_max[i][k - 1] + num_partitions_with_max[i - k][k];
+            }
+            for k in i + 1..=n {
+                num_partitions_with_max[i][k] = num_partitions_with_max[i][k - 1];
+            }
+        }
+
+        let num_partitions = (0..=n).map(|i| num_partitions_with_max[i][i]).collect();
         Self {
             factorials,
             pows_of_evens_times_factorials,
             t0_partial_a0_1s,
+            num_partitions_with_max,
+            num_partitions,
         }
     }
 
@@ -43,13 +63,35 @@ impl PrecomputedData {
         // [0] is 0.
         &self.t0_partial_a0_1s[p.get(1).copied().unwrap_or_default() as usize]
     }
+
+    fn unrank_partition(&self, n: u32, rank: u64) -> Vec<u32> {
+        let n = n as usize;
+        debug_assert!(rank < self.num_partitions_with_max[n][n]);
+        let mut ans = vec![0; n + 1];
+        let mut current_n = n;
+        let mut max_val = n;
+        let mut index = rank;
+        while current_n > 0 {
+            for k in (1..=max_val).rev() {
+                let count = current_n
+                    .checked_sub(k)
+                    .map(|x| self.num_partitions_with_max[x][k])
+                    .unwrap_or_default();
+                if index < count {
+                    ans[k] += 1;
+                    current_n -= k;
+                    max_val = k;
+                } else {
+                    index -= count;
+                }
+            }
+        }
+        ans
+    }
 }
 
 pub fn count_hypercube_nets(n: u32) -> Integer {
     let precomputed = PrecomputedData::new(n as usize);
-
-    // Precompute partitions for all k in 0..=n
-    let partitions = generate_all_partitions(n);
 
     let mut sums = ThreadLocal::<RefCell<Integer>>::new();
 
@@ -58,64 +100,27 @@ pub fn count_hypercube_nets(n: u32) -> Integer {
         .into_par_iter()
         .flat_map(|n_p| {
             let n_m = n - n_p;
-            let p_list = &partitions[n_p as usize];
-            let m_list = &partitions[n_m as usize];
-            // TODO(veluca): this is broken if this calculation overflows.
-            let num = p_list.len() * m_list.len();
+            let num_p = precomputed.num_partitions[n_p as usize] as usize;
+            let num_m = precomputed.num_partitions[n_m as usize] as usize;
+            let num = num_p.checked_mul(num_m).expect("too many terms");
             repeat(n_p).zip(0..num)
         })
         .for_each(|(n_p, i)| {
             let n_m = n - n_p;
-            let p_list = &partitions[n_p as usize];
-            let m_list = &partitions[n_m as usize];
-            let p_idx = i / m_list.len();
-            let m_idx = i % m_list.len();
+            let num_m = precomputed.num_partitions[n_m as usize] as usize;
+            let p_idx = i / num_m;
+            let m_idx = i % num_m;
+            let p = precomputed.unrank_partition(n_p, p_idx as u64);
+            let m = precomputed.unrank_partition(n_m, m_idx as u64);
             let sum = sums.get_or_default();
-            sum.borrow_mut().add_from(calculate_term(
-                &p_list[p_idx],
-                &m_list[m_idx],
-                n,
-                &bn_size,
-                &precomputed,
-            ));
+            sum.borrow_mut()
+                .add_from(calculate_term(&p, &m, n, &bn_size, &precomputed));
         });
     let mut tot_sum = Integer::ZERO;
     for i in sums.iter_mut() {
         tot_sum.add_from(&*i.borrow());
     }
     tot_sum / bn_size
-}
-
-#[inline(never)]
-fn generate_all_partitions(n: u32) -> Vec<Vec<Vec<u32>>> {
-    let mut result = vec![Vec::new(); (n + 1) as usize];
-
-    for target in 0..=n {
-        let mut parts = Vec::new();
-        generate_partitions_recursive(target, 1, &mut vec![0; (n + 1) as usize], &mut parts);
-        result[target as usize] = parts;
-    }
-    result
-}
-
-fn generate_partitions_recursive(
-    remaining: u32,
-    min_k: u32,
-    current: &mut Vec<u32>,
-    result: &mut Vec<Vec<u32>>,
-) {
-    if remaining == 0 {
-        result.push(current.clone());
-        return;
-    }
-    for k in min_k..=remaining {
-        let max_i = remaining / k;
-        for i in 1..=max_i {
-            current[k as usize] += i;
-            generate_partitions_recursive(remaining - i * k, k + 1, current, result);
-            current[k as usize] -= i;
-        }
-    }
 }
 
 fn calculate_term(
