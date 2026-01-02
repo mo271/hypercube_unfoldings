@@ -17,7 +17,7 @@ struct PrecomputedData {
 
 impl PrecomputedData {
     fn new(n: usize) -> Self {
-        let factorials: Vec<Integer> = (0..=n).map(|i| factorial(i)).collect();
+        let factorials: Vec<Integer> = (0..=n).map(factorial).collect();
         let t0_partial_a0_1s: Vec<Integer> = (0..=n as u32)
             .map(|x| {
                 if x >= 2 {
@@ -36,9 +36,7 @@ impl PrecomputedData {
             .collect();
 
         let mut num_partitions_with_max = vec![vec![0u64; n + 1]; n + 1];
-        for i in 0..=n {
-            num_partitions_with_max[0][i] = 1;
-        }
+        num_partitions_with_max[0].fill_with(|| 1);
         for i in 1..=n {
             for k in 1..=i {
                 num_partitions_with_max[i][k] =
@@ -154,15 +152,15 @@ fn calculate_term(
         let mut mat = vec![vec![Integer::ZERO; size]; size];
         let num_paired_rows = 2 * p2 as usize;
 
-        for r in 0..size {
-            for c in 0..size {
+        for (r, row) in mat.iter_mut().enumerate() {
+            for (c, val) in row.iter_mut().enumerate() {
                 let orig_r = r + 1;
                 let orig_c = c + 1;
                 if r == c {
                     if orig_r < num_paired_rows {
-                        mat[r][c] = Integer::from(2 * v as i64 - 3);
+                        *val = Integer::from(2 * v as i64 - 3);
                     } else {
-                        mat[r][c] = Integer::from(2 * v as i64 - 2);
+                        *val = Integer::from(2 * v as i64 - 2);
                     }
                 } else {
                     let is_pair = if orig_r < num_paired_rows && orig_c < num_paired_rows {
@@ -171,9 +169,9 @@ fn calculate_term(
                         false
                     };
                     if is_pair {
-                        mat[r][c] = Integer::from(-1);
+                        *val = Integer::from(-1);
                     } else {
-                        mat[r][c] = Integer::from(-2);
+                        *val = Integer::from(-2);
                     }
                 }
             }
@@ -192,18 +190,18 @@ fn calculate_term(
     // w cannot overflow a u64 even with n = 1000
     let mut w = vec![0u64; (2 * n + 1) as usize];
 
-    for b in 1..p.len() {
-        if p[b] > 0 {
+    for (b, &v) in p.iter().enumerate().skip(1) {
+        if v > 0 {
             for a in ((2 * b)..w.len()).step_by(b) {
-                w[a] += 2 * b as u64 * p[b] as u64;
+                w[a] += 2 * b as u64 * v as u64;
             }
         }
     }
-    for k in 1..m.len() {
-        if m[k] > 0 {
+    for (k, &v) in m.iter().enumerate().skip(1) {
+        if v > 0 {
             let b = 2 * k;
             for a in ((2 * b)..w.len()).step_by(b) {
-                w[a] += b as u64 * m[k] as u64;
+                w[a] += b as u64 * v as u64;
             }
         }
     }
@@ -213,7 +211,7 @@ fn calculate_term(
     for a in (a_0 + 1)..=(2 * n) {
         let a_idx = a as usize;
         let p_a = p.get(a_idx).copied().unwrap_or_default();
-        let a_idx_h = if a_idx % 2 == 0 {
+        let a_idx_h = if a_idx.is_multiple_of(2) {
             a_idx / 2
         } else {
             usize::MAX
@@ -239,21 +237,21 @@ fn calculate_term(
     let tr_g = t_0 * prod;
 
     let mut cent_size = Integer::ONE.clone();
-    for k in 1..p.len() {
-        if p[k] > 0 {
-            cent_size *= &precomputed_data.pows_of_evens_times_factorials[k][p[k] as usize];
+    for (k, &v) in p.iter().enumerate().skip(1) {
+        if v > 0 {
+            cent_size *= &precomputed_data.pows_of_evens_times_factorials[k][v as usize];
         }
     }
-    for k in 1..m.len() {
-        if m[k] > 0 {
-            cent_size *= &precomputed_data.pows_of_evens_times_factorials[k][m[k] as usize];
+    for (k, &v) in m.iter().enumerate().skip(1) {
+        if v > 0 {
+            cent_size *= &precomputed_data.pows_of_evens_times_factorials[k][v as usize];
         }
     }
 
     (tr_g * bn_size) / cent_size
 }
 
-fn determinant_bigint(matrix: &mut Vec<Vec<Integer>>) -> Integer {
+fn determinant_bigint(matrix: &mut [Vec<Integer>]) -> Integer {
     let n = matrix.len();
     if n == 0 {
         return Integer::ONE.clone();
@@ -269,17 +267,17 @@ fn determinant_bigint(matrix: &mut Vec<Vec<Integer>>) -> Integer {
     for k in 0..n - 1 {
         if matrix[k][k].is_zero() {
             let mut swap_row = None;
-            for i in k + 1..n {
-                if !matrix[i][k].is_zero() {
+            for (i, row) in matrix.iter_mut().enumerate().skip(k) {
+                if !row[k].is_zero() {
                     swap_row = Some(i);
                     break;
                 }
             }
             if let Some(r) = swap_row {
                 matrix.swap(k, r);
-                for i in 0..n {
-                    matrix[k][i].sub_from(Integer::ZERO);
-                }
+                matrix[k].iter_mut().for_each(|v| {
+                    v.sub_from(&Integer::ZERO);
+                });
             } else {
                 return Integer::ZERO;
             }
