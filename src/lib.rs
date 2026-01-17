@@ -118,15 +118,15 @@ pub fn count_hypercube_nets(n: u32) -> Integer {
         })
         .for_each(|(n_p, i)| {
             let n_m = n - n_p;
-            let num_m = precomputed.num_partitions[n_m as usize] as usize;
+            let num_m = precomputed.num_partitions[n_m] as usize;
             let p_idx = i / num_m;
             let m_idx = i % num_m;
             let p = unrank_cache_p.get_or_default();
             let m = unrank_cache_m.get_or_default();
             let mut p = p.borrow_mut();
             let mut m = m.borrow_mut();
-            precomputed.unrank_partition(n_p, p_idx as u64, &mut *p);
-            precomputed.unrank_partition(n_m, m_idx as u64, &mut *m);
+            precomputed.unrank_partition(n_p, p_idx as u64, &mut p);
+            precomputed.unrank_partition(n_m, m_idx as u64, &mut m);
             let sum = sums.get_or_default();
             let cache = caches.get_or_default();
             calculate_term(
@@ -135,8 +135,8 @@ pub fn count_hypercube_nets(n: u32) -> Integer {
                 n,
                 &bn_size,
                 &precomputed,
-                &mut *sum.borrow_mut(),
-                &mut *cache.borrow_mut(),
+                &mut sum.borrow_mut(),
+                &mut cache.borrow_mut(),
             );
         });
     let mut tot_sum = Integer::ZERO;
@@ -252,7 +252,7 @@ fn calculate_term(
     }
 
     for a in (a_0 + 1)..=(2 * n) {
-        let a_idx = a as usize;
+        let a_idx = a;
         let p_a = p.get(a_idx).copied().unwrap_or_default();
         let a_idx_h = if a_idx.is_multiple_of(2) {
             a_idx / 2
