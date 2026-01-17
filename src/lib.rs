@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 
+use indicatif::{ProgressBar, ProgressStyle};
 use rayon::{iter::repeat, prelude::*};
 use rug::{
     Assign, Integer,
@@ -23,6 +24,7 @@ struct ThreadCache {
     cent: Integer,
     val: Integer,
     val_tmp: Integer,
+    count: u64,
 }
 
 impl PrecomputedData {
@@ -102,9 +104,31 @@ pub fn count_hypercube_nets(n: u32) -> Integer {
     let precomputed = PrecomputedData::new(n);
 
     let mut sums = ThreadLocal::<RefCell<Integer>>::new();
-    let caches = ThreadLocal::<RefCell<ThreadCache>>::new();
+    let mut caches = ThreadLocal::<RefCell<ThreadCache>>::new();
     let unrank_cache_p = ThreadLocal::<RefCell<Vec<u32>>>::new();
     let unrank_cache_m = ThreadLocal::<RefCell<Vec<u32>>>::new();
+
+    let total_iterations: u64 = (0..=n)
+        .map(|n_p| {
+            let n_m = n - n_p;
+            precomputed.num_partitions[n_p] * precomputed.num_partitions[n_m]
+        })
+        .sum();
+
+    let pb = if total_iterations > 1000 {
+        let pb = ProgressBar::new(total_iterations);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        pb
+    } else {
+        ProgressBar::hidden()
+    };
 
     let bn_size = Integer::from(2u32).pow(n as u32) * &precomputed.factorials[n];
     (0..=n)
@@ -129,20 +153,31 @@ pub fn count_hypercube_nets(n: u32) -> Integer {
             precomputed.unrank_partition(n_m, m_idx as u64, &mut m);
             let sum = sums.get_or_default();
             let cache = caches.get_or_default();
+            let mut cache = cache.borrow_mut();
             calculate_term(
                 &p,
                 &m,
                 n,
                 &bn_size,
                 &precomputed,
-                &mut sum.borrow_mut(),
-                &mut cache.borrow_mut(),
+                &mut *sum.borrow_mut(),
+                &mut *cache,
             );
+            cache.count += 1;
+            if cache.count >= 1000 {
+                pb.inc(1000);
+                cache.count -= 1000;
+            }
         });
+
     let mut tot_sum = Integer::ZERO;
     for i in sums.iter_mut() {
         tot_sum.add_from(&*i.borrow());
     }
+    for cache in caches.iter_mut() {
+        pb.inc(cache.borrow().count);
+    }
+    pb.finish_and_clear();
     tot_sum / bn_size
 }
 
@@ -162,6 +197,7 @@ fn calculate_term(
         cent,
         val,
         val_tmp,
+        ..
     } = cache;
     let p2 = p.get(2).copied().unwrap_or_default();
     let m1 = m.get(1).copied().unwrap_or_default();

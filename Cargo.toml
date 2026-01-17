@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+indicatif = { version = "0.18.3", features = ["rayon"] }
 mimalloc = "0.1.48"
 rayon = "1.11.0"
 rug = "1.28.0"
